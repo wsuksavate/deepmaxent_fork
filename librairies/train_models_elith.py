@@ -699,7 +699,12 @@ def train_deepmodel(
     input_size = X_tensor.shape[1]
     output_size = y_tensor.shape[1]
     
-    model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)      
+    ### If using species embedding model
+    if sp_embedding:
+        model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)
+    else:
+        model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)  
+    
     model = model.to(device)
     if hasattr(args, 'weight_decay') and args.weight_decay is not None:
         optimizer = optim.Adam(

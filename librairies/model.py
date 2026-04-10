@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class deepmaxent_model(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size,hidden_nbr):
+    def __init__(self, input_size, hidden_size, output_size, hidden_nbr):
         super(deepmaxent_model, self).__init__()
         
         self.fc1_lambda = nn.Linear(input_size, hidden_size)
@@ -20,7 +20,7 @@ class deepmaxent_model(nn.Module):
 ### My modification: Add species embedding
 ### num_species = output_size
 class deepmaxent_embedding_model(nn.Module):
-    def __init__(self, input_size, num_species, hidden_nbr, hidden_size=250, embedding_dim=3):
+    def __init__(self, input_size, hidden_size, num_species, hidden_nbr, embedding_dim=3):
         super(deepmaxent_model, self).__init__()
         self.num_species = num_species
         # Define the Embedding Matrix for all species
