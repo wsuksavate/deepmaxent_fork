@@ -677,7 +677,8 @@ def train_deepmodel(
     args,
     hidden_size=250,
     device="cuda",
-    loss_option="deepmaxent"
+    loss_option="deepmaxent",
+    sp_embedding=False
 ):
 
     X_tens_data = TensorDataset(X_tensor, y_tensor)
