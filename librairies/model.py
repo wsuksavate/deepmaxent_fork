@@ -21,7 +21,7 @@ class deepmaxent_model(nn.Module):
 ### num_species = output_size
 class deepmaxent_embedding_model(nn.Module):
     def __init__(self, input_size, hidden_size, num_species, hidden_nbr, embedding_dim=3):
-        super(deepmaxent_model, self).__init__()
+        super(deepmaxent_embedding_model, self).__init__()
         self.num_species = num_species
         # Define the Embedding Matrix for all species
         self.species_embedding = nn.Embedding(num_embeddings=num_species, embedding_dim=embedding_dim)
