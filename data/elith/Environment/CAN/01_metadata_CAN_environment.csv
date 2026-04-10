@@ -1,0 +1,12 @@
+﻿Code,Description,Units,Continous (Cont) or Categorical (Cat),Notes
+alt,Digital elevation,m,Cont,From SRTM 
+asp2,Aspect – ranges from -1 to 1 (sin transformation),number (dimensionless unit),Cont,From SRTM
+ontprec,Annual Precipitation,mm,Cont,Version 1.2 of Worldclim data – see Hijmans et al. 2005 International Journal of Climatology 25: 1965-1978
+ontprec4,April precipitation,mm,Cont,Version 1.2 of Worldclim data – see Hijmans et al. 2005 International Journal of Climatology 25: 1965-1978
+ontprecsd,Precipitation Seasonality,number (dimensionless unit),Cont,Version 1.2 of Worldclim data – see Hijmans et al. 2005 International Journal of Climatology 25: 1965-1978
+ontslp,Slope,degrees,Cont,From SRTM
+onttemp,Annual mean temperature,˚C * 10,Cont,Version 1.2 of Worldclim data – see Hijmans et al. 2005 International Journal of Climatology 25: 1965-1978
+onttempsd,Temperature standard deviation,number (dimensionless unit),Cont,Version 1.2 of Worldclim data – see Hijmans et al. 2005 International Journal of Climatology 25: 1965-1978
+onttmin4,April minimum temperature,˚C * 10,Cont,Version 1.2 of Worldclim data – see Hijmans et al. 2005 International Journal of Climatology 25: 1965-1978
+ontveg,"Vegetation, from Ontario Land Cover Database (OLC) vegetation map, derived from a mosaic of Landsat images.",number (dimensionless unit),Cat,"5 classes: 1 = open forest & related; 2 = closed forest; 3 = open water, 4 = agriculture, 5 = human settlement"
+watdist,Distance from Hudson Bay,m,Cont,
