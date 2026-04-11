@@ -703,8 +703,10 @@ def train_deepmodel(
     ### If using species embedding model
     if sp_embedding:
         model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)
+        print("\nUse Species Embedding Model")
     else:
         model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)  
+        print("\nUse Original Model")
     
     model = model.to(device)
     if hasattr(args, 'weight_decay') and args.weight_decay is not None:

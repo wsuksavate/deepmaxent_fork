@@ -32,7 +32,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
 # DeepMaxent libraries
-from librairies.model import deepmaxent_model
+from librairies.model import deepmaxent_model, deepmaxent_embedding_model
 from librairies.losses import deepmaxent_loss
 from librairies.utils import set_seed
 
@@ -823,7 +823,7 @@ def compute_auc(model, X, y, device):
     return mean_auc, valid_aucs
 
 
-def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size=250, device="cuda"):
+def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size=50, device="cuda", sp_embedding = True):
     """
     Train DeepMaxent model with validation monitoring.
     
@@ -838,7 +838,13 @@ def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size=250, devic
     input_size = X_train.shape[1]
     output_size = y_train.shape[1]
     
-    model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)
+    ### If using species embedding model
+    if sp_embedding:
+        model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)
+        print("\nUse Species Embedding Model")
+    else:
+        model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)  
+        print("\nUse Original Model")
     model = model.to(device)
     
     criterion = deepmaxent_loss().to(device)
@@ -926,7 +932,6 @@ def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size=250, devic
     }
 
 #%%
-
 # Train the model!
 results = train_deepmodel(
     X_train_tensor, 
