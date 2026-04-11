@@ -70,3 +70,43 @@ def make_results_directory(args):
     if not os.path.exists(f'{args.outputdir}/AUC_by_species'):    
         os.mkdir(f'{args.outputdir}/AUC_by_species')
         
+
+def compute_auc(model, X, y, device):
+    """
+    Compute mean AUC across all species with sufficient data.
+    
+    Args:
+        model: trained DeepMaxent model
+        X: input features tensor
+        y: target occurrence tensor
+        device: computation device
+    
+    Returns:
+        mean_auc: average AUC across species
+        valid_aucs: list of AUC values for each valid species
+    """
+    model.eval()
+    with torch.no_grad():
+        X_dev = X.to(device)
+        predictions = model(X_dev).cpu()
+        # Apply softmax to get probabilities
+        probs = torch.softmax(predictions, dim=0).numpy()
+    
+    y_np = y.numpy()
+    
+    # Convert to binary (presence/absence)
+    y_binary = (y_np > 0).astype(int)
+    
+    valid_aucs = []
+    for sp_idx in range(y_binary.shape[1]):
+        # Only compute AUC if species has both presences and absences
+        if y_binary[:, sp_idx].sum() > 0 and y_binary[:, sp_idx].sum() < len(y_binary):
+            try:
+                auc = roc_auc_score(y_binary[:, sp_idx], probs[:, sp_idx])
+                valid_aucs.append(auc)
+            except:
+                pass
+    
+    mean_auc = np.mean(valid_aucs) if valid_aucs else 0.0
+    return mean_auc, valid_aucs
+        

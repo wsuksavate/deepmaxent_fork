@@ -187,11 +187,9 @@ print("\n✅ Tensor creation complete!")
 print(f"   X (environmental features): {X_tensor.shape}")
 print(f"   y (occurrence counts):      {y_tensor.shape}")
 
-#%%
+#%% Visualize species occurrence distribution
 
-# Visualize species occurrence distribution
 fig, axes = plt.subplots(1, 2, figsize=(8, 3))
-
 # Distribution of occurrences per species
 ax1 = axes[0]
 species_totals = y_tensor.sum(dim=0).numpy()
@@ -227,7 +225,6 @@ plt.show()
 
 #%%Map of Species Richness
 
-# Map species richness
 fig = plt.figure(figsize=(8, 6))
 ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
 
@@ -280,26 +277,22 @@ plt.show()
 
 #%% Spatial Block Split for Train/Validation
 # Spatial Block Split
-# We'll divide the study area into blocks based on longitude and assign blocks to train/validation
+# We divide the study area into longitudinal bands to reduce spatial autocorrelation
+# Validation bands: 20th-30th percentile AND 70th-80th percentile
 
 # Get coordinates from df_unique
 longitudes = df_unique['lon'].values
 latitudes = df_unique['lat'].values
 
-# Define the split based on longitude (roughly 80% train, 20% validation)
-# We'll use the western part for training and eastern part for validation
-lon_threshold = np.percentile(longitudes, 80)
+# Calculate all necessary percentile thresholds simultaneously
+p20, p30, p70, p80 = np.percentile(longitudes, [20, 30, 70, 80])
+
+# Create validation mask using bitwise OR for the two distinct geographic bands
+val_mask = ((longitudes >= p20) & (longitudes < p30)) | \
+           ((longitudes >= p70) & (longitudes < p80))
 
 # Create train/validation masks
-train_mask = longitudes < lon_threshold
-val_mask = ~train_mask
-
-print("🔀 SPATIAL BLOCK SPLIT")
-print("=" * 50)
-print(f"📍 Longitude threshold: {lon_threshold:.4f}°")
-print(f"\n📊 Split statistics:")
-print(f"   Training set:   {train_mask.sum():,} locations ({100*train_mask.mean():.1f}%)")
-print(f"   Validation set: {val_mask.sum():,} locations ({100*val_mask.mean():.1f}%)")
+train_mask = ~val_mask
 
 # Split the tensors
 X_train = X_tensor[train_mask]
@@ -307,11 +300,22 @@ y_train = y_tensor[train_mask]
 X_val = X_tensor[val_mask]
 y_val = y_tensor[val_mask]
 
+# --- Analytical Validation Printouts ---
+print("🔀 SPATIAL BAND SPLIT")
+print("=" * 50)
+print(f"📍 Band 1 (Lon): {p20:.4f}° to {p30:.4f}°")
+print(f"📍 Band 2 (Lon): {p70:.4f}° to {p80:.4f}°")
+print("\n📊 Split statistics:")
+print(f"   Training set:   {train_mask.sum():,} locations ({100*train_mask.mean():.1f}%)")
+print(f"   Validation set: {val_mask.sum():,} locations ({100*val_mask.mean():.1f}%)")
+
+#%% Plot Train / Validation set
+
 # Get coordinates for plotting
 train_coords = df_unique[train_mask][['lon', 'lat']].values
 val_coords = df_unique[val_mask][['lon', 'lat']].values
 
-print(f"\n📐 Tensor shapes:")
+print("\n📐 Tensor shapes:")
 print(f"   X_train: {X_train.shape}")
 print(f"   y_train: {y_train.shape}")
 print(f"   X_val:   {X_val.shape}")
@@ -349,16 +353,13 @@ ax.scatter(val_coords[:, 0], val_coords[:, 1],
 
 # Draw the split line using plot instead of axvline (works with cartopy projections)
 lat_min, lat_max = df_unique['lat'].min() - padding, df_unique['lat'].max() + padding
-ax.plot([lon_threshold, lon_threshold], [lat_min, lat_max], 
-        color='#2c3e50', linestyle='--', linewidth=2, 
-        transform=ccrs.PlateCarree(), label=f'Split boundary ({lon_threshold:.2f}°)')
 
 # Gridlines
 gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', alpha=0.5, linestyle='--')
 gl.top_labels = False
 gl.right_labels = False
 
-ax.set_title('patial Block Split: Training vs Validation Sets\n(Based on Longitude)', 
+ax.set_title('Block Split: Training vs Validation Sets\n(Based on Longitude)', 
              fontsize=14, fontweight='bold', pad=20)
 ax.legend(loc='lower left', fontsize=10)
 
@@ -401,7 +402,7 @@ y_train_tensor = y_train_clean
 X_val_tensor = torch.tensor(X_val_scaled, dtype=torch.float32)
 y_val_tensor = y_val_clean
 
-print(f"\n✅ Data preprocessing complete!")
+print("\n✅ Data preprocessing complete!")
 print(f"   X_train_tensor: {X_train_tensor.shape}")
 print(f"   y_train_tensor: {y_train_tensor.shape}")
 print(f"   X_val_tensor:   {X_val_tensor.shape}")
@@ -416,9 +417,9 @@ import copy
 # Training configuration using a simple namespace
 class Args:
     def __init__(self):
-        self.learning_rate = 0.001
-        self.epoch = 5000
-        self.hidden_nbr = 2  # Number of hidden layers
+        self.learning_rate = 0.01
+        self.epoch = 3000
+        self.hidden_nbr = 3  # Number of hidden layers
         self.weight_decay = 1e-4  # L2 regularization
 
 args = Args()
@@ -432,62 +433,26 @@ print(torch.cuda.get_device_name(0))
 input_size = X_train_tensor.shape[1]
 output_size = y_train_tensor.shape[1]
 hidden_size = 30
+batch_size = 50
 
-print(f"\n🧠 Model Architecture:")
+print("\n🧠 Model Architecture:")
 print(f"   Input size:  {input_size} (environmental variables)")
 print(f"   Hidden size: {hidden_size}")
 print(f"   Output size: {output_size} (species)")
 print(f"   Hidden layers: {args.hidden_nbr}")
 
-print(f"\n⚙️ Training Configuration:")
+print("\n⚙️ Training Configuration:")
 print(f"   Learning rate: {args.learning_rate}")
 print(f"   Epochs: {args.epoch}")
 print(f"   Weight decay: {args.weight_decay}")
-print(f"   Batch size: 250")
+print(f"   Batch size: {batch_size}")
 
 #%% Training Loop with Validation AUC
 # DeepMaxent loss for optimization
 # Validation AUC computed at each epoch to monitor performance
 # Best model selection based on validation loss
 
-def compute_auc(model, X, y, device):
-    """
-    Compute mean AUC across all species with sufficient data.
-    
-    Args:
-        model: trained DeepMaxent model
-        X: input features tensor
-        y: target occurrence tensor
-        device: computation device
-    
-    Returns:
-        mean_auc: average AUC across species
-        valid_aucs: list of AUC values for each valid species
-    """
-    model.eval()
-    with torch.no_grad():
-        X_dev = X.to(device)
-        predictions = model(X_dev).cpu()
-        # Apply softmax to get probabilities
-        probs = torch.softmax(predictions, dim=0).numpy()
-    
-    y_np = y.numpy()
-    
-    # Convert to binary (presence/absence)
-    y_binary = (y_np > 0).astype(int)
-    
-    valid_aucs = []
-    for sp_idx in range(y_binary.shape[1]):
-        # Only compute AUC if species has both presences and absences
-        if y_binary[:, sp_idx].sum() > 0 and y_binary[:, sp_idx].sum() < len(y_binary):
-            try:
-                auc = roc_auc_score(y_binary[:, sp_idx], probs[:, sp_idx])
-                valid_aucs.append(auc)
-            except:
-                pass
-    
-    mean_auc = np.mean(valid_aucs) if valid_aucs else 0.0
-    return mean_auc, valid_aucs
+from librairies.utils import compute_auc
 
 
 def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size=50, device="cuda", sp_embedding = True):
