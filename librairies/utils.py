@@ -113,4 +113,11 @@ def compute_auc(model, X, y, device):
     
     mean_auc = np.mean(valid_aucs) if valid_aucs else 0.0
     return mean_auc, valid_aucs
+    
+class Args:
+    def __init__(self, learning_rate, epoch, hidden_nbr, weight_decay):
+        self.learning_rate = learning_rate
+        self.epoch = epoch
+        self.hidden_nbr = hidden_nbr  
+        self.weight_decay = weight_decay
         

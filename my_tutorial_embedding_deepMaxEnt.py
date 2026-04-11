@@ -154,6 +154,7 @@ y_tensor = torch.zeros((num_locations, num_species), dtype=torch.float32)
 
 # Build occurrence count matrix (y)
 print("🔢 Building occurrence count matrix...")
+
 for idx, row in tqdm(df_unique.iterrows(), total=len(df_unique), desc="Processing locations"):
     species_at_location = row['species']
     for sp in species_at_location:
@@ -405,14 +406,12 @@ print(f"   y_val_tensor:   {y_val_tensor.shape}")
 #%% Define Training Configuration and Model# Additional imports for training
 
 # Training configuration using a simple namespace
-class Args:
-    def __init__(self):
-        self.learning_rate = 0.001
-        self.epoch = 3000
-        self.hidden_nbr = 3  # Number of hidden layers
-        self.weight_decay = 1e-4  # L2 regularization
+from librairies.utils import Args
 
-args = Args()
+args = Args(learning_rate = 0.001,
+            epoch = 5000,
+            hidden_nbr = 3, # Number of hidden layers
+            weight_decay = 1e-4) # L2 regularization
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -422,7 +421,7 @@ print(torch.cuda.get_device_name(0))
 # Model parameters
 input_size = X_train_tensor.shape[1]
 output_size = y_train_tensor.shape[1]
-hidden_size = 30
+hidden_size = 50 # size of each hidden layer
 batch_size = 150
 
 print("\n🧠 Model Architecture:")
@@ -456,3 +455,87 @@ results = train_deepmodel(
     device=device,
     sp_embedding = True
 )
+
+#%% Get embedding layer
+import pandas as pd
+
+# Extract the trained model from your results dictionary
+trained_model = results['model']
+
+# Access the embedding layer's weights and convert to a NumPy array
+# .detach()   -> Removes the tensor from the gradient computation graph
+# .cpu()      -> Moves the tensor from the GPU (if used) to the CPU
+# .numpy()    -> Converts the PyTorch tensor into a standard NumPy array
+learned_embeddings = trained_model.species_embedding.weight.detach().cpu().numpy()
+
+# Assuming you still have your 'idx_to_species' dictionary from data prep
+# Swap species:index dictionary
+idx_to_species = {y: x for x, y in species_to_idx.items()}
+
+# Create a list of species names ordered by their index
+ordered_species_names = [idx_to_species[i] for i in range(len(idx_to_species))]
+
+# Create a DataFrame
+embedding_df = pd.DataFrame(
+    learned_embeddings, 
+    columns=['Emb_Dim_1', 'Emb_Dim_2', 'Emb_Dim_3'],
+    index=ordered_species_names
+)
+
+# Verify the shape
+print(f"✅ Extracted embeddings shape: {learned_embeddings.shape}")
+print(f"   (Expected: {trained_model.num_species} species × 3 embedding dimensions)")
+
+#%%
+import matplotlib.pyplot as plt
+import numpy as np
+
+print("📊 Generating presentation-ready 3D embedding plot...")
+
+# 1. Initialize figure with strict white background for presentations
+fig = plt.figure(figsize=(12, 9), facecolor='white')
+ax = fig.add_subplot(111, projection='3d')
+ax.set_facecolor('white')
+
+# 2. Extract dimensions
+x = embedding_df['Emb_Dim_1']
+y = embedding_df['Emb_Dim_2']
+z = embedding_df['Emb_Dim_3']
+
+# Optional: We can color the dots based on their depth (Z-axis) for better 3D perception
+colors = plt.cm.viridis((z - z.min()) / (z.max() - z.min()))
+
+# 3. Create the 3D scatter plot
+scatter = ax.scatter(
+    x, y, z, 
+    c=colors, 
+    s=60,               # Marker size
+    alpha=0.8,          # Slight transparency to see overlaps
+    edgecolor='black',  # Clean borders
+    linewidth=0.5
+)
+
+# 4. Clean up axes and labels
+ax.set_xlabel('Latent Trait 1', fontsize=12, fontweight='bold', labelpad=10)
+ax.set_ylabel('Latent Trait 2', fontsize=12, fontweight='bold', labelpad=10)
+ax.set_zlabel('Latent Trait 3', fontsize=12, fontweight='bold', labelpad=10)
+ax.set_title('Learned 3D Species Ecological Niche Space', fontsize=16, fontweight='bold', pad=20)
+
+# Remove the default gray background panes for a cleaner slide look
+ax.xaxis.pane.fill = False
+ax.yaxis.pane.fill = False
+ax.zaxis.pane.fill = False
+ax.grid(color='lightgray', linestyle='--', linewidth=0.5)
+
+# 5. Annotate a few sample species (e.g., the first 5) to give context
+for i in range(5):
+    ax.text(x.iloc[i], y.iloc[i], z.iloc[i], 
+            f' $\it{{{embedding_df.index[i]}}}$', 
+            fontsize=9, zdir='x')
+
+# Save the figure
+plot_path = "data/tutorial/species_embedding_3d.png"
+plt.tight_layout()
+plt.savefig(plot_path, dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
+print(f"✅ 3D Plot saved to: {plot_path}")
+plt.show()
