@@ -21,6 +21,7 @@ from tqdm import tqdm
 from sklearn.model_selection import KFold
 import verde as vd
 from librairies.model import deepmaxent_model, deepmaxent_embedding_model, make_predictions
+from librairies.utils import compute_auc
 
 
 def resize_array(array_3d, new_shape, categorical_indices,sum_option=False):
@@ -669,96 +670,6 @@ def cv_deepmodel(
         "best_epoch": best_epoch
     }
     return result
-    
-
-def train_deepmodel(
-    X_tensor,
-    y_tensor, 
-    args,
-    hidden_size=250,
-    device="cuda",
-    loss_option="deepmaxent",
-    sp_embedding=False
-):
-
-    X_tens_data = TensorDataset(X_tensor, y_tensor)
-    train_loader = DataLoader(X_tens_data, batch_size=250, shuffle=True)
-    
-    
-    if loss_option == "deepmaxent":
-        criterion = deepmaxent_loss().to(device)
-    elif loss_option == "poisson":
-        criterion = poisson_loss().to(device)
-    elif loss_option == "ce":
-        criterion = ce_loss().to(device)
-    elif loss_option == "bce":
-        criterion = bce_loss().to(device)
-    else:
-        raise ValueError("Loss option not recognized")
-
-        
-    input_size = X_tensor.shape[1]
-    output_size = y_tensor.shape[1]
-    
-    ### If using species embedding model
-    if sp_embedding:
-        model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)
-        print("\nUse Species Embedding Model")
-    else:
-        model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)  
-        print("\nUse Original Model")
-    
-    model = model.to(device)
-    if hasattr(args, 'weight_decay') and args.weight_decay is not None:
-        optimizer = optim.Adam(
-            [
-                {"params": model.parameters(), "lr": args.learning_rate, "weight_decay":args.weight_decay},
-            ],
-        )
-    else:
-        optimizer = optim.Adam(
-            [
-                {"params": model.parameters(), "lr": args.learning_rate},
-            ],
-        )
-
-    num_epochs = args.epoch
-    loss_by_batch = []
-    best_loss = float('inf')
-    best_model = None
-
-    for epoch in tqdm(range(num_epochs), desc="Training"):
-        model.train()
-        total_loss_train = 0.0
-
-        for batch_X, batch_y in train_loader:
-
-            optimizer.zero_grad()
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            outputs = model(batch_X)
-            loss = criterion(outputs, batch_y) 
-            loss.backward()
-
-            optimizer.step()
-            total_loss_train += loss.item()
-            
-        loss_by_batch.append(total_loss_train / len(train_loader))
-        
-        # wandb.log({"epoch": epoch,
-        #             "total_loss": total_loss_train / len(train_loader)})
-        
-        if total_loss_train / len(train_loader) < best_loss:
-            best_loss = total_loss_train / len(train_loader)
-            best_model = copy.deepcopy(model.state_dict())
-                
-    model.load_state_dict(best_model)
-    predictions = make_predictions(model, X_tensor)
-    result = {
-        "predictions": predictions,
-        "model": model,
-    }
-    return result
-    
 
 def mask_arr(arrays, array_mask):
     reshaped_mask = array_mask.reshape(array_mask.shape[0] * array_mask.shape[1])
@@ -778,3 +689,111 @@ def make_results_directory(args):
         os.mkdir(f"{args.outputdir}")
     if not os.path.exists(f"{args.outputdir}/models"):
         os.mkdir(f"{args.outputdir}/models")
+
+def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size, device="cuda", sp_embedding = True):
+    """
+    Train DeepMaxent model with validation monitoring.
+    
+    Returns:
+        dict with model, predictions, loss history, and AUC history
+    """
+    # Create data loaders
+    train_dataset = TensorDataset(X_train, y_train)
+    train_loader = DataLoader(train_dataset, batch_size=250, shuffle=True)
+    
+    # Initialize model and loss
+    input_size = X_train.shape[1]
+    output_size = y_train.shape[1]
+    
+    ### If using species embedding model
+    if sp_embedding:
+        model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)
+        print("\nUse Species Embedding Model")
+    else:
+        model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)  
+        print("\nUse Original Model")
+    model = model.to(device)
+    
+    criterion = deepmaxent_loss().to(device)
+    
+    optimizer = optim.Adam(
+        model.parameters(),
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay
+    )
+    
+    # Training history
+    train_losses = []
+    val_losses = []
+    train_aucs = []
+    val_aucs = []
+    
+    best_val_loss = float('inf')
+    best_model_state = None
+    
+    print("🚀 Starting training...")
+    print("=" * 60)
+    
+    for epoch in tqdm(range(args.epoch), desc="Training"):
+        # Training phase
+        model.train()
+        total_train_loss = 0.0
+        
+        for batch_X, batch_y in train_loader:
+            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+            
+            optimizer.zero_grad()
+            outputs = model(batch_X)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+            
+            total_train_loss += loss.item()
+        
+        avg_train_loss = total_train_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
+        
+        # Validation phase
+        model.eval()
+        with torch.no_grad():
+            X_val_dev = X_val.to(device)
+            y_val_dev = y_val.to(device)
+            val_outputs = model(X_val_dev)
+            val_loss = criterion(val_outputs, y_val_dev).item()
+        val_losses.append(val_loss)
+        
+        # Compute AUC every 10 epochs (to save time)
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            train_auc, _ = compute_auc(model, X_train, y_train, device)
+            val_auc, _ = compute_auc(model, X_val, y_val, device)
+            train_aucs.append((epoch, train_auc))
+            val_aucs.append((epoch, val_auc))
+            
+            print(f"   Epoch {epoch+1:3d} | Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | "
+                  f"Train AUC: {train_auc:.4f} | Val AUC: {val_auc:.4f}")
+        
+        # Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_model_state = copy.deepcopy(model.state_dict())
+    
+    # Load best model
+    model.load_state_dict(best_model_state)
+    
+    # Final predictions
+    model.eval()
+    with torch.no_grad():
+        final_predictions = model(X_train.to(device)).cpu()
+    
+    print("=" * 60)
+    print(f" Training complete! Best validation loss: {best_val_loss:.4f}")
+    
+    return {
+        "model": model,
+        "predictions": final_predictions,
+        "train_losses": train_losses,
+        "val_losses": val_losses,
+        "train_aucs": train_aucs,
+        "val_aucs": val_aucs,
+        "best_val_loss": best_val_loss
+    }

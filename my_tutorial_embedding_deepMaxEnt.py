@@ -16,7 +16,6 @@ from tqdm import tqdm
 
 # Geospatial libraries
 import rasterio
-from rasterio.windows import from_bounds
 
 # Machine Learning
 import torch
@@ -26,11 +25,6 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-
-# DeepMaxent libraries
-from librairies.model import deepmaxent_model, deepmaxent_embedding_model
-from librairies.losses import deepmaxent_loss
-from librairies.utils import set_seed
 
 #%% Data Import and Cleaning
 # Load the biodiversity dataset
@@ -409,15 +403,11 @@ print(f"   X_val_tensor:   {X_val_tensor.shape}")
 print(f"   y_val_tensor:   {y_val_tensor.shape}")
 
 #%% Define Training Configuration and Model# Additional imports for training
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-from sklearn.metrics import roc_auc_score
-import copy
 
 # Training configuration using a simple namespace
 class Args:
     def __init__(self):
-        self.learning_rate = 0.01
+        self.learning_rate = 0.001
         self.epoch = 3000
         self.hidden_nbr = 3  # Number of hidden layers
         self.weight_decay = 1e-4  # L2 regularization
@@ -433,7 +423,7 @@ print(torch.cuda.get_device_name(0))
 input_size = X_train_tensor.shape[1]
 output_size = y_train_tensor.shape[1]
 hidden_size = 30
-batch_size = 50
+batch_size = 150
 
 print("\n🧠 Model Architecture:")
 print(f"   Input size:  {input_size} (environmental variables)")
@@ -452,119 +442,10 @@ print(f"   Batch size: {batch_size}")
 # Validation AUC computed at each epoch to monitor performance
 # Best model selection based on validation loss
 
-from librairies.utils import compute_auc
+# DeepMaxent libraries
+from librairies.train_models_custom import train_deepmodel
 
-
-def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size=50, device="cuda", sp_embedding = True):
-    """
-    Train DeepMaxent model with validation monitoring.
-    
-    Returns:
-        dict with model, predictions, loss history, and AUC history
-    """
-    # Create data loaders
-    train_dataset = TensorDataset(X_train, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=250, shuffle=True)
-    
-    # Initialize model and loss
-    input_size = X_train.shape[1]
-    output_size = y_train.shape[1]
-    
-    ### If using species embedding model
-    if sp_embedding:
-        model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)
-        print("\nUse Species Embedding Model")
-    else:
-        model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)  
-        print("\nUse Original Model")
-    model = model.to(device)
-    
-    criterion = deepmaxent_loss().to(device)
-    
-    optimizer = optim.Adam(
-        model.parameters(),
-        lr=args.learning_rate,
-        weight_decay=args.weight_decay
-    )
-    
-    # Training history
-    train_losses = []
-    val_losses = []
-    train_aucs = []
-    val_aucs = []
-    
-    best_val_loss = float('inf')
-    best_model_state = None
-    
-    print("🚀 Starting training...")
-    print("=" * 60)
-    
-    for epoch in tqdm(range(args.epoch), desc="Training"):
-        # Training phase
-        model.train()
-        total_train_loss = 0.0
-        
-        for batch_X, batch_y in train_loader:
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            
-            optimizer.zero_grad()
-            outputs = model(batch_X)
-            loss = criterion(outputs, batch_y)
-            loss.backward()
-            optimizer.step()
-            
-            total_train_loss += loss.item()
-        
-        avg_train_loss = total_train_loss / len(train_loader)
-        train_losses.append(avg_train_loss)
-        
-        # Validation phase
-        model.eval()
-        with torch.no_grad():
-            X_val_dev = X_val.to(device)
-            y_val_dev = y_val.to(device)
-            val_outputs = model(X_val_dev)
-            val_loss = criterion(val_outputs, y_val_dev).item()
-        val_losses.append(val_loss)
-        
-        # Compute AUC every 10 epochs (to save time)
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            train_auc, _ = compute_auc(model, X_train, y_train, device)
-            val_auc, _ = compute_auc(model, X_val, y_val, device)
-            train_aucs.append((epoch, train_auc))
-            val_aucs.append((epoch, val_auc))
-            
-            print(f"   Epoch {epoch+1:3d} | Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | "
-                  f"Train AUC: {train_auc:.4f} | Val AUC: {val_auc:.4f}")
-        
-        # Save best model
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_model_state = copy.deepcopy(model.state_dict())
-    
-    # Load best model
-    model.load_state_dict(best_model_state)
-    
-    # Final predictions
-    model.eval()
-    with torch.no_grad():
-        final_predictions = model(X_train.to(device)).cpu()
-    
-    print("=" * 60)
-    print(f" Training complete! Best validation loss: {best_val_loss:.4f}")
-    
-    return {
-        "model": model,
-        "predictions": final_predictions,
-        "train_losses": train_losses,
-        "val_losses": val_losses,
-        "train_aucs": train_aucs,
-        "val_aucs": val_aucs,
-        "best_val_loss": best_val_loss
-    }
-
-#%%
-# Train the model!
+# Train model
 results = train_deepmodel(
     X_train_tensor, 
     y_train_tensor, 
@@ -572,5 +453,6 @@ results = train_deepmodel(
     y_val_tensor, 
     args, 
     hidden_size=hidden_size, 
-    device=device
+    device=device,
+    sp_embedding = True
 )
