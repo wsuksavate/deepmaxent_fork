@@ -106,141 +106,34 @@ plt.show()
 
 #%% Define study area extent based on occurrence data
 # Setup folders
-input_folder = 'data/custom/rasters'
+rasters_dir = 'data/custom/rasters'
 
 # List available rasters
-raster_files = sorted([f for f in os.listdir(input_folder) if f.endswith('.tif')])
-print(f"\n📂 Found {len(raster_files)} raster files")
-print(f"{raster_files}")
-
-#%% Crop all rasters to the study extent
-print("✂️ Cropping rasters to study area...")
-
-for filename in tqdm(raster_files, desc="Processing"):
-    input_path = os.path.join(input_folder, filename)
-    output_path = os.path.join(output_folder, filename)
-    
-    with rasterio.open(input_path) as src:
-        # Get the window for our extent
-        window = from_bounds(
-            min_longitude, min_latitude, 
-            max_longitude, max_latitude, 
-            transform=src.transform
-        )
-        
-        # Read cropped data
-        data = src.read(window=window)
-        
-        # Update metadata
-        meta = src.meta.copy()
-        meta.update({
-            'height': int(window.height),
-            'width': int(window.width),
-            'transform': rasterio.windows.transform(window, src.transform)
-        })
-        
-        # Write cropped raster
-        if window.height > 0 and window.width > 0:
-            with rasterio.open(output_path, 'w', **meta) as dst:
-                dst.write(data)
-
-print(f"\n✅ Successfully cropped {len(raster_files)} rasters!")
-
-# Check the cropped raster dimensions
-with rasterio.open(os.path.join(output_folder, raster_files[0])) as src:
-    print(f"\n📐 Cropped raster dimensions: {src.width} × {src.height} pixels")
-    print(f"   Resolution: {abs(src.transform[0]):.4f}° (~{abs(src.transform[0]) * 111:.1f} km)")
-    
-#%% Visuaize environmental variables
-# Select key variables to visualize
-variables_to_plot = [
-    ('CHELSA_bio1_1981-2010_V.2.1.tif', 'BIO1: Annual Mean Temperature', '°C × 10', 'RdYlBu_r'),
-    ('CHELSA_bio12_1981-2010_V.2.1.tif', 'BIO12: Annual Precipitation', 'mm', 'YlGnBu'),
-    ('CHELSA_bio4_1981-2010_V.2.1.tif', 'BIO4: Temperature Seasonality', 'std × 100', 'Spectral_r'),
-    ('CHELSA_bio15_1981-2010_V.2.1.tif', 'BIO15: Precipitation Seasonality', 'CV', 'BrBG')
-]
-
-fig, axes = plt.subplots(2, 2, figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
-axes = axes.flatten()
-
-for ax, (filename, title, unit, cmap) in zip(axes, variables_to_plot):
-    filepath = os.path.join(output_folder, filename)
-    
-    with rasterio.open(filepath) as src:
-        data = src.read(1).astype(np.float32)
-        extent_raster = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
-        nodata = src.nodata
-        
-        # Mask nodata values and any extreme values that could cause overflow
-        if nodata is not None:
-            data = np.ma.masked_where(
-                (data == nodata) | (np.abs(data) > 1e10) | ~np.isfinite(data), 
-                data
-            )
-        else:
-            data = np.ma.masked_where((np.abs(data) > 1e10) | ~np.isfinite(data), data)
-    
-    # Add features
-    ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
-    ax.add_feature(cfeature.BORDERS, linestyle='--', linewidth=0.3)
-    
-    # Plot raster
-    im = ax.imshow(data, extent=extent_raster, origin='upper', cmap=cmap, 
-                   transform=ccrs.PlateCarree())
-    
-    # Overlay occurrences
-    ax.scatter(df_clean['lon'], df_clean['lat'],
-               c='black', s=3, alpha=0.3, transform=ccrs.PlateCarree())
-    
-    # Colorbar
-    cbar = plt.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
-    cbar.set_label(unit, fontsize=10)
-    
-    # Gridlines
-    gl = ax.gridlines(draw_labels=True, linewidth=0.3, alpha=0.5, linestyle='--')
-    gl.top_labels = False
-    gl.right_labels = False
-    
-    ax.set_title(title, fontsize=12, fontweight='bold')
-
-plt.suptitle('Key Bioclimatic Variables with Species Occurrences (black dots)', 
-             fontsize=16, fontweight='bold', y=1.02)
-plt.tight_layout()
-plt.show()
-
-#%%
-# Prepare Training Data
-# Now we'll prepare the data for DeepMaxent by:
-# 1 Extracting environmental values at each occurrence location
-# 2 Aggregating occurrences by raster cell (multiple observations at the same location)
-# 3 Building the occurrence count matrix (y) where each entry represents the number of observations per species per location
-
-# Get the raster resolution info
-rasters_dir = 'data/custom/cropped_rasters/'
 raster_files = sorted([f for f in os.listdir(rasters_dir) if f.endswith('.tif')])
 
+# Check the cropped raster dimensions
 # Get raster properties
 with rasterio.open(os.path.join(rasters_dir, raster_files[0])) as src:
     raster_resolution = abs(src.transform[0])
     raster_transform = src.transform
     raster_crs = src.crs
+    
+    print(f"\n📐 Raster dimensions: {src.width} × {src.height} pixels")
+    print(f"📐 Raster resolution: {raster_resolution:.4f}° (~{raster_resolution * 111:.1f} km)")
+    print(f"📁 Number of environmental variables: {len(raster_files)}")
+    print("\n📋 Variables:")
+    for i, f in enumerate(raster_files, 1):
+        print(f"   {i:2d}. {f}")
 
-print(f"📐 Raster resolution: {raster_resolution:.4f}° (~{raster_resolution * 111:.1f} km)")
-print(f"📁 Number of environmental variables: {len(raster_files)}")
-print("\n📋 Variables:")
-for i, f in enumerate(raster_files, 1):
-    print(f"   {i:2d}. {f}")
 
-#%% Aggregate Occurrences by Raster Cell
-# Multiple species observations can occur at the same location. We need to:
-# 1 Group observations by unique coordinates
-# 2 Count occurrences per species at each location
-# 3 This creates our occurrence count matrix (y)
+#%%
+# Prepare Training Data
+# Round 'lat' and 'lon' columns to 3 decimal places
+df_clean[['lat', 'lon']] = df_clean[['lat', 'lon']].round(3)
 
 # Aggregate observations by unique location
 # This groups all species observations at each coordinate pair
-df_unique = df_clean.groupby(['lon', 'lat']).agg({
-    'species': list  # Collect all species observed at this location
+df_unique = df_clean.groupby(['lon', 'lat']).agg({'species': list  # Collect all species observed at this location
 }).reset_index()
 
 # Get unique species list and create index mapping
@@ -248,9 +141,9 @@ species_list = df_clean['species'].unique()
 num_species = len(species_list)
 species_to_idx = {species: idx for idx, species in enumerate(species_list)}
 
+print(f"📊 From {len(df_clean):,} individual observations")
 print(f"📍 Unique locations: {len(df_unique):,}")
 print(f"🌱 Unique species: {num_species:,}")
-print(f"📊 From {len(df_clean):,} individual observations")
 print(f"\n📐 Aggregation ratio: {len(df_clean) / len(df_unique):.1f} observations per location (avg)")
 
 #%% Build Training Tensors
@@ -261,6 +154,7 @@ print(f"\n📐 Aggregation ratio: {len(df_clean) / len(df_unique):.1f} observati
 num_locations = len(df_unique)
 num_variables = len(raster_files)
 
+# Create zeros matrices for X and y
 X_tensor = torch.zeros((num_locations, num_variables), dtype=torch.float32)
 y_tensor = torch.zeros((num_locations, num_species), dtype=torch.float32)
 
@@ -289,7 +183,7 @@ for var_idx, filename in enumerate(tqdm(raster_files, desc="Processing rasters")
         
         X_tensor[:, var_idx] = torch.tensor(values, dtype=torch.float32)
 
-print(f"\n✅ Tensor creation complete!")
+print("\n✅ Tensor creation complete!")
 print(f"   X (environmental features): {X_tensor.shape}")
 print(f"   y (occurrence counts):      {y_tensor.shape}")
 
