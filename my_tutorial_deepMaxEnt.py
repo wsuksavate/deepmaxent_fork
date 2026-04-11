@@ -751,7 +751,7 @@ class Args:
     def __init__(self):
         self.learning_rate = 0.001
         self.epoch = 5000
-        self.hidden_nbr = 3  # Number of hidden layers
+        self.hidden_nbr = 2  # Number of hidden layers
         self.weight_decay = 1e-4  # L2 regularization
 
 args = Args()
@@ -764,7 +764,7 @@ print(torch.cuda.get_device_name(0))
 # Model parameters
 input_size = X_train_tensor.shape[1]
 output_size = y_train_tensor.shape[1]
-hidden_size = 250
+hidden_size = 30
 
 print(f"\n🧠 Model Architecture:")
 print(f"   Input size:  {input_size} (environmental variables)")
