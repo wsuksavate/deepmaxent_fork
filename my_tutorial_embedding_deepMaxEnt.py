@@ -406,7 +406,7 @@ print(f"   y_val_tensor:   {y_val_tensor.shape}")
 #%% Define Training Configuration and Model# Additional imports for training
 
 # Training configuration using a simple namespace
-from librairies.utils import Args
+from librairies.utils import Args, compute_auc
 
 args = Args(learning_rate = 0.001,
             epoch = 5000,
@@ -456,6 +456,109 @@ results = train_deepmodel(
     sp_embedding = True
 )
 
+#%% Visualize training progress
+# Plot training curves
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Loss curves
+ax1 = axes[0]
+epochs = range(1, len(results['train_losses']) + 1)
+ax1.plot(epochs, results['train_losses'], 'b-', linewidth=2, label='Training Loss', alpha=0.8)
+ax1.plot(epochs, results['val_losses'], 'r-', linewidth=2, label='Validation Loss', alpha=0.8)
+ax1.set_xlabel('Epoch', fontsize=12)
+ax1.set_ylabel('DeepMaxent Loss', fontsize=12)
+ax1.set_title('Training and Validation Loss', fontsize=13, fontweight='bold')
+ax1.legend(fontsize=10)
+ax1.grid(True, alpha=0.3)
+ax1.spines['top'].set_visible(False)
+ax1.spines['right'].set_visible(False)
+
+# AUC curves
+ax2 = axes[1]
+train_auc_epochs = [x[0] + 1 for x in results['train_aucs']]
+train_auc_values = [x[1] for x in results['train_aucs']]
+val_auc_epochs = [x[0] + 1 for x in results['val_aucs']]
+val_auc_values = [x[1] for x in results['val_aucs']]
+
+ax2.plot(train_auc_epochs, train_auc_values, 'b-o', linewidth=2, markersize=6, 
+         label='Training AUC', alpha=0.8)
+ax2.plot(val_auc_epochs, val_auc_values, 'r-o', linewidth=2, markersize=6, 
+         label='Validation AUC', alpha=0.8)
+ax2.axhline(y=0.5, color='gray', linestyle='--', linewidth=1, label='Random (AUC=0.5)')
+ax2.set_xlabel('Epoch', fontsize=12)
+ax2.set_ylabel('Mean AUC', fontsize=12)
+ax2.set_title('AUC Evolution During Training', fontsize=13, fontweight='bold')
+ax2.legend(fontsize=10)
+ax2.grid(True, alpha=0.3)
+ax2.set_ylim([0.4, 1.0])
+ax2.spines['top'].set_visible(False)
+ax2.spines['right'].set_visible(False)
+
+plt.tight_layout()
+plt.show()
+
+# Print final metrics
+print("\n📊 FINAL METRICS")
+print("=" * 50)
+print(f"   Final Training Loss:   {results['train_losses'][-1]:.4f}")
+print(f"   Final Validation Loss: {results['val_losses'][-1]:.4f}")
+print(f"   Best Validation Loss:  {results['best_val_loss']:.4f}")
+print(f"\n   Final Training AUC:    {train_auc_values[-1]:.4f}")
+print(f"   Final Validation AUC:  {val_auc_values[-1]:.4f}")
+
+#%% Detailed AUC Analysis per Species
+
+# Compute detailed AUC for validation set
+val_mean_auc, val_species_aucs = compute_auc(results['model'], X_val_tensor, y_val_tensor, device)
+
+# Distribution of AUC values
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Histogram of AUC values
+ax1 = axes[0]
+ax1.hist(val_species_aucs, bins=30, color='#3498db', edgecolor='white', alpha=0.8)
+ax1.axvline(x=np.mean(val_species_aucs), color='#e74c3c', linestyle='--', linewidth=2,
+            label=f'Mean AUC: {np.mean(val_species_aucs):.3f}')
+ax1.axvline(x=np.median(val_species_aucs), color='#27ae60', linestyle='--', linewidth=2,
+            label=f'Median AUC: {np.median(val_species_aucs):.3f}')
+ax1.axvline(x=0.5, color='gray', linestyle=':', linewidth=2, label='Random (0.5)')
+ax1.set_xlabel('AUC Score', fontsize=12)
+ax1.set_ylabel('Number of Species', fontsize=12)
+ax1.set_title('Distribution of Validation AUC per Species', fontsize=13, fontweight='bold')
+ax1.legend(fontsize=10)
+ax1.spines['top'].set_visible(False)
+ax1.spines['right'].set_visible(False)
+
+# Box plot
+ax2 = axes[1]
+box = ax2.boxplot(val_species_aucs, vert=True, patch_artist=True)
+box['boxes'][0].set_facecolor('#3498db')
+box['boxes'][0].set_alpha(0.7)
+ax2.axhline(y=0.5, color='gray', linestyle='--', linewidth=1, label='Random (0.5)')
+ax2.set_ylabel('AUC Score', fontsize=12)
+ax2.set_title('AUC Distribution (Box Plot)', fontsize=13, fontweight='bold')
+ax2.set_xticklabels(['Validation Set'])
+ax2.legend(fontsize=10)
+ax2.spines['top'].set_visible(False)
+ax2.spines['right'].set_visible(False)
+
+plt.tight_layout()
+plt.show()
+
+# Summary statistics
+print("\n📊 VALIDATION AUC SUMMARY")
+print("=" * 50)
+print(f"   Number of species evaluated: {len(val_species_aucs)}")
+print(f"   Mean AUC:   {np.mean(val_species_aucs):.4f}")
+print(f"   Median AUC: {np.median(val_species_aucs):.4f}")
+print(f"   Std AUC:    {np.std(val_species_aucs):.4f}")
+print(f"   Min AUC:    {np.min(val_species_aucs):.4f}")
+print(f"   Max AUC:    {np.max(val_species_aucs):.4f}")
+print(f"\n   Species with AUC > 0.7: {sum(np.array(val_species_aucs) > 0.7)} ({100*sum(np.array(val_species_aucs) > 0.7)/len(val_species_aucs):.1f}%)")
+print(f"   Species with AUC > 0.5: {sum(np.array(val_species_aucs) > 0.5)} ({100*sum(np.array(val_species_aucs) > 0.5)/len(val_species_aucs):.1f}%)")
+
+#%% Suitability Map
+
 #%% Get embedding layer
 import pandas as pd
 
@@ -468,12 +571,9 @@ trained_model = results['model']
 # .numpy()    -> Converts the PyTorch tensor into a standard NumPy array
 learned_embeddings = trained_model.species_embedding.weight.detach().cpu().numpy()
 
-# Assuming you still have your 'idx_to_species' dictionary from data prep
-# Swap species:index dictionary
-idx_to_species = {y: x for x, y in species_to_idx.items()}
-
+# Assuming you still have your 'species_to_idx' dictionary from data prep
 # Create a list of species names ordered by their index
-ordered_species_names = [idx_to_species[i] for i in range(len(idx_to_species))]
+ordered_species_names = list(species_to_idx.keys())
 
 # Create a DataFrame
 embedding_df = pd.DataFrame(
@@ -486,7 +586,7 @@ embedding_df = pd.DataFrame(
 print(f"✅ Extracted embeddings shape: {learned_embeddings.shape}")
 print(f"   (Expected: {trained_model.num_species} species × 3 embedding dimensions)")
 
-#%%
+#%% 3D plot of embedding latent
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -539,3 +639,4 @@ plt.tight_layout()
 plt.savefig(plot_path, dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
 print(f"✅ 3D Plot saved to: {plot_path}")
 plt.show()
+
