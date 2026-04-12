@@ -47,6 +47,27 @@ print(f"📍 Valid observations with coordinates: {len(df_clean):,}")
 print("\n📋 Distribution by Species:")
 print(df_clean['species'].value_counts())
 
+#%% Filter out species that have fewer than 5 observations
+min_count = 100
+
+# Calculate the frequency of each species
+species_counts = df_clean['species'].value_counts()
+# Identify species that meet the minimum threshold (>= min_count)
+valid_species = species_counts[species_counts >= min_count].index
+
+# Filter the dataframe to keep only those valid species and create a clean copy
+df_clean = df_clean[df_clean['species'].isin(valid_species)].copy()
+
+# Analytical printouts to verify the data reduction
+species_removed = len(species_counts) - len(valid_species)
+print("\n🧹 RARE SPECIES FILTERING")
+print("=" * 50)
+print(f"📉 Species removed (n < 5): {species_removed:,}")
+print(f"🌿 Valid observations remaining: {len(df_clean):,}")
+print(f"🌱 Unique species remaining: {df_clean['species'].nunique():,}")
+print("\n📋 Distribution by Species (Top 10):")
+print(df_clean['species'].value_counts().head(10))
+
 #%% Create a beautiful map showing all occurrences
 fig = plt.figure(figsize=(8, 6))
 ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
@@ -409,8 +430,8 @@ print(f"   y_val_tensor:   {y_val_tensor.shape}")
 from librairies.utils import Args, compute_auc
 
 args = Args(learning_rate = 0.001,
-            epoch = 5000,
-            hidden_nbr = 3, # Number of hidden layers
+            epoch = 2500,
+            hidden_nbr = 4, # Number of hidden layers
             weight_decay = 1e-4) # L2 regularization
 
 # Set device
@@ -557,7 +578,296 @@ print(f"   Max AUC:    {np.max(val_species_aucs):.4f}")
 print(f"\n   Species with AUC > 0.7: {sum(np.array(val_species_aucs) > 0.7)} ({100*sum(np.array(val_species_aucs) > 0.7)/len(val_species_aucs):.1f}%)")
 print(f"   Species with AUC > 0.5: {sum(np.array(val_species_aucs) > 0.5)} ({100*sum(np.array(val_species_aucs) > 0.5)/len(val_species_aucs):.1f}%)")
 
-#%% Suitability Map
+#%% Generate Species Suitability Maps
+
+# Load all rasters and stack them in the correct order
+print("📂 Loading rasters in training order...")
+print(f"   Raster directory: {rasters_dir}")
+print(f"   Number of variables: {len(raster_files)}")
+
+# Load the first raster to get metadata
+with rasterio.open(os.path.join(rasters_dir, raster_files[0])) as src:
+    raster_height = src.height
+    raster_width = src.width
+    raster_transform_map = src.transform
+    raster_crs_map = src.crs
+    raster_bounds = src.bounds
+
+print(f"\n📐 Raster dimensions: {raster_width} × {raster_height} pixels")
+print(f"   Total pixels: {raster_width * raster_height:,}")
+
+# Stack all rasters in the same order as training
+raster_stack = np.zeros((len(raster_files), raster_height, raster_width), dtype=np.float32)
+
+for i, filename in enumerate(tqdm(raster_files, desc="Loading rasters")):
+    filepath = os.path.join(rasters_dir, filename)
+    with rasterio.open(filepath) as src:
+        data = src.read(1).astype(np.float32)
+        nodata_val = src.nodata
+        
+        # Replace nodata with NaN
+        if nodata_val is not None:
+            data[data == nodata_val] = np.nan
+        # Also mask extreme values
+        data[np.abs(data) > 1e10] = np.nan
+        
+        raster_stack[i] = data
+
+print(f"\n✅ Raster stack shape: {raster_stack.shape}")
+print("   Order of variables:")
+for i, f in enumerate(raster_files):
+    print(f"   {i}: {f}")
+    
+# Reshape raster stack for model prediction
+# From (n_variables, height, width) to (n_pixels, n_variables)
+n_pixels = raster_height * raster_width
+
+# Reshape: (variables, height, width) -> (height*width, variables)
+X_raster = raster_stack.reshape(len(raster_files), -1).T  # Shape: (n_pixels, n_variables)
+
+print(f"📐 Reshaped for prediction: {X_raster.shape}")
+
+# Create mask for valid pixels (no NaN in any variable)
+valid_pixel_mask = ~np.isnan(X_raster).any(axis=1)
+n_valid_pixels = valid_pixel_mask.sum()
+
+print(f"   Valid pixels: {n_valid_pixels:,} / {n_pixels:,} ({100*n_valid_pixels/n_pixels:.1f}%)")
+
+# Extract only valid pixels for prediction
+X_valid = X_raster[valid_pixel_mask]
+
+# Apply the same scaler used during training
+print("\n🔄 Applying StandardScaler (same as training)...")
+X_valid_scaled = scaler.transform(X_valid)
+
+# Convert to tensor
+X_valid_tensor = torch.tensor(X_valid_scaled, dtype=torch.float32)
+print(f"   Tensor shape for prediction: {X_valid_tensor.shape}")
+
+#%% Run model prediction on the raster data
+print("🧠 Running model prediction on raster pixels...")
+
+model = results['model']
+model.eval()
+model = model.to(device)
+
+# Predict in batches to avoid memory issues
+batch_size = 10000
+n_batches = (len(X_valid_tensor) + batch_size - 1) // batch_size
+
+predictions_list = []
+
+with torch.no_grad():
+    for i in tqdm(range(n_batches), desc="Predicting"):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, len(X_valid_tensor))
+        
+        batch = X_valid_tensor[start_idx:end_idx].to(device)
+        batch_pred = model(batch).cpu()
+        predictions_list.append(batch_pred)
+
+# Concatenate all predictions
+predictions_valid = torch.cat(predictions_list, dim=0)
+
+# Apply softmax to get suitability probabilities (along spatial dimension)
+# This gives relative suitability across space for each species
+suitability_valid = torch.softmax(predictions_valid, dim=0).numpy()
+
+print("\n✅ Predictions complete!")
+print(f"   Suitability shape: {suitability_valid.shape}")
+print(f"   (n_valid_pixels, n_species) = ({n_valid_pixels:,}, {num_species:,})")
+
+#%% Reconstruct full suitability maps (including NaN pixels)
+print("🗺️ Reconstructing suitability maps...")
+
+# Initialize full suitability array with NaN
+suitability_maps = np.full((num_species, n_pixels), np.nan, dtype=np.float32)
+
+# Fill in valid pixels
+suitability_maps[:, valid_pixel_mask] = suitability_valid.T  # Transpose to (species, pixels)
+
+# Reshape to (n_species, height, width)
+suitability_maps = suitability_maps.reshape(num_species, raster_height, raster_width)
+
+print(f"✅ Suitability maps shape: {suitability_maps.shape}")
+print(f"   (n_species, height, width) = ({num_species:,}, {raster_height}, {raster_width})")
+
+# Create species index to name mapping
+idx_to_species = {idx: species for species, idx in species_to_idx.items()}
+
+# Find top species by number of occurrences for visualization
+species_occurrence_counts = y_tensor.sum(dim=0).numpy()
+top_species_indices = np.argsort(species_occurrence_counts)[::-1][:10]
+
+print("\n📊 Top 10 species by occurrence count:")
+for rank, sp_idx in enumerate(top_species_indices, 1):
+    sp_name = idx_to_species[sp_idx]
+    count = int(species_occurrence_counts[sp_idx])
+    print(f"   {rank:2d}. {sp_name}: {count} occurrences")
+    
+#%% Visulize suitabulity maps
+# Plot suitability maps for top 4 species
+fig, axes = plt.subplots(2, 2, figsize=(12, 10), subplot_kw={'projection': ccrs.PlateCarree()})
+axes = axes.flatten()
+
+# Raster extent for plotting
+extent_map = [raster_bounds.left, raster_bounds.right, raster_bounds.bottom, raster_bounds.top]
+
+for ax, sp_idx in zip(axes, top_species_indices[:4]):
+    sp_name = idx_to_species[sp_idx]
+    suitability = suitability_maps[sp_idx]
+    
+    # Mask NaN values
+    suitability_masked = np.ma.masked_invalid(suitability)
+    
+    # Normalize for better visualization (0-1 range based on this species)
+    suit_min = np.nanmin(suitability)
+    suit_max = np.nanmax(suitability)
+    if suit_max > suit_min:
+        suitability_norm = (suitability_masked - suit_min) / (suit_max - suit_min)
+    else:
+        suitability_norm = suitability_masked
+    
+    # Set map style (no ocean/lakes)
+    ax.set_facecolor('honeydew')
+    oceans = cfeature.NaturalEarthFeature('physical', 'ocean', '10m', edgecolor='none', facecolor='lightblue')
+    ax.add_feature(oceans, zorder=2)
+    lakes = cfeature.NaturalEarthFeature('physical', 'lakes', '10m', edgecolor='none', facecolor='lightblue')
+    ax.add_feature(lakes, zorder=2)
+    ax.add_feature(cfeature.BORDERS, zorder=2)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, zorder=2)
+    
+    # Plot suitability map
+    im = ax.imshow(suitability_norm, extent=extent_map, origin='upper', 
+                   cmap='YlOrRd', transform=ccrs.PlateCarree(), vmin=0, vmax=1, zorder=1)
+    
+    # Get occurrence points for this species
+    sp_occurrences = y_tensor[:, sp_idx].numpy()
+    has_occurrence = sp_occurrences > 0
+    if has_occurrence.any():
+        occ_lons = df_unique['lon'].values[has_occurrence]
+        occ_lats = df_unique['lat'].values[has_occurrence]
+        ax.scatter(occ_lons, occ_lats, c='blue', s=10, alpha=0.6, 
+                   transform=ccrs.PlateCarree(), edgecolor='white', linewidth=0.3,
+                   label=f'Occurrences (n={has_occurrence.sum()})', zorder=3)
+    
+    # Colorbar
+    cbar = plt.colorbar(im, ax=ax, shrink=0.7, pad=0.02)
+    cbar.set_label('Relative Suitability', fontsize=9)
+    
+    # Gridlines
+    gl = ax.gridlines(draw_labels=True, linewidth=0.3, alpha=0.5, linestyle='--')
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'fontsize': 8}
+    gl.ylabel_style = {'fontsize': 8}
+    
+    # Title with species name in italic
+    space_char = r"\ " # Use raw string to avoid escape issues
+    ax.set_title(f'$\it{{{sp_name.replace(" ", space_char)}}}$\n({int(species_occurrence_counts[sp_idx])} occurrences)')
+    ax.legend(loc='lower left', fontsize=8)
+
+plt.suptitle('Predicted Suitability Maps for Top 4 Species\n(Blue dots = observed occurrences)', 
+             fontsize=14, fontweight='bold', y=1.02)
+plt.tight_layout()
+plt.show()
+
+#%% Species Richness Map
+# Compute predicted a sum of suitability across species(sum of suitabilities)
+# This gives an indication of how many species are predicted to be suitable at each location
+
+# Sum suitabilities across all species
+predicted_richness = np.nansum(suitability_maps, axis=0)
+predicted_richness_masked = np.ma.masked_invalid(predicted_richness)
+
+# Plot
+fig = plt.figure(figsize=(12, 8))
+ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
+
+# Set map style (no ocean/lakes visible over land)
+ax.set_facecolor('honeydew')
+oceans = cfeature.NaturalEarthFeature('physical', 'ocean', '10m', edgecolor='none', facecolor='lightblue')
+ax.add_feature(oceans, zorder=2)
+lakes = cfeature.NaturalEarthFeature('physical', 'lakes', '10m', edgecolor='none', facecolor='lightblue')
+ax.add_feature(lakes, zorder=2)
+ax.add_feature(cfeature.BORDERS, zorder=2)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, zorder=2)
+
+# Plot predicted richness
+im = ax.imshow(predicted_richness_masked, extent=extent_map, origin='upper', 
+               cmap='Spectral_r', transform=ccrs.PlateCarree(), zorder=1)
+
+# Colorbar
+cbar = plt.colorbar(im, ax=ax, shrink=0.7, pad=0.02)
+cbar.set_label('Sum of Suitability Scores', fontsize=11)
+
+# Gridlines
+gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', alpha=0.5, linestyle='--')
+gl.top_labels = False
+gl.right_labels = False
+
+ax.set_title('Sum of suitability across all species', 
+             fontsize=14, fontweight='bold', pad=20)
+
+plt.tight_layout()
+plt.show()
+
+print("Predicted Richness Statistics:")
+print(f"   Min: {np.nanmin(predicted_richness):.4f}")
+print(f"   Max: {np.nanmax(predicted_richness):.4f}")
+print(f"   Mean: {np.nanmean(predicted_richness):.4f}")
+
+#%% Save Suitability Maps as GeoTIFF (Optional)
+
+# Create output directory for suitability maps
+output_suitability_dir = 'output/suitability_maps'
+os.makedirs(output_suitability_dir, exist_ok=True)
+
+# Save suitability maps for top 10 species
+print("💾 Saving suitability maps as GeoTIFF...")
+
+for sp_idx in tqdm(top_species_indices[:10], desc="Saving"):
+    sp_name = idx_to_species[sp_idx]
+    # Clean species name for filename
+    sp_name_clean = sp_name.replace(' ', '_').replace('.', '')
+    
+    suitability = suitability_maps[sp_idx]
+    
+    # Define output path
+    output_path = os.path.join(output_suitability_dir, f'suitability_{sp_name_clean}.tif')
+    
+    # Write GeoTIFF
+    with rasterio.open(
+        output_path, 'w',
+        driver='GTiff',
+        height=raster_height,
+        width=raster_width,
+        count=1,
+        dtype=np.float32,
+        crs=raster_crs_map,
+        transform=raster_transform_map,
+        nodata=np.nan
+    ) as dst:
+        dst.write(suitability, 1)
+
+# Also save the species richness map
+richness_path = os.path.join(output_suitability_dir, 'predicted_species_richness.tif')
+with rasterio.open(
+    richness_path, 'w',
+    driver='GTiff',
+    height=raster_height,
+    width=raster_width,
+    count=1,
+    dtype=np.float32,
+    crs=raster_crs_map,
+    transform=raster_transform_map,
+    nodata=np.nan
+) as dst:
+    dst.write(predicted_richness.astype(np.float32), 1)
+
+print(f"\n✅ Saved {len(top_species_indices[:10]) + 1} GeoTIFF files to: {output_suitability_dir}")
+print("   - 10 species suitability maps")
+print("   - 1 predicted species richness map")
 
 #%% Get embedding layer
 import pandas as pd
@@ -628,7 +938,7 @@ ax.zaxis.pane.fill = False
 ax.grid(color='lightgray', linestyle='--', linewidth=0.5)
 
 # 5. Annotate a few sample species (e.g., the first 5) to give context
-for i in range(5):
+for i in range(20):
     ax.text(x.iloc[i], y.iloc[i], z.iloc[i], 
             f' $\it{{{embedding_df.index[i]}}}$', 
             fontsize=9, zdir='x')
