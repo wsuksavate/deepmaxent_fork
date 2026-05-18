@@ -1,4 +1,5 @@
 import os
+import sys
 # import wandb
 from librairies.losses import bce_loss, ce_loss, deepmaxent_loss, poisson_loss
 from librairies.model import make_predictions
@@ -20,7 +21,7 @@ import torch.optim as optim
 from tqdm import tqdm
 from sklearn.model_selection import KFold
 import verde as vd
-from librairies.model import deepmaxent_model, deepmaxent_embedding_model, make_predictions
+from librairies.model import deepmaxent_model, deepmaxent_embedding_model, deepmaxent_encoding_embedding_model, make_predictions
 from librairies.utils import compute_auc
 
 
@@ -690,9 +691,10 @@ def make_results_directory(args):
     if not os.path.exists(f"{args.outputdir}/models"):
         os.mkdir(f"{args.outputdir}/models")
 
-def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size, device="cuda", sp_embedding = True):
+def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size, device="cuda", model_type = "encoding_embedding"):
     """
     Train DeepMaxent model with validation monitoring.
+    model_type = original, embedding, encoding_embedding
     
     Returns:
         dict with model, predictions, loss history, and AUC history
@@ -706,12 +708,19 @@ def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size, device="c
     output_size = y_train.shape[1]
     
     ### If using species embedding model
-    if sp_embedding:
+    if model_type == "embedding":
         model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)
         print("\nUse Species Embedding Model")
-    else:
+    elif model_type == "original":
         model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)  
         print("\nUse Original Model")
+    elif model_type == "encoding_embedding":
+        model = deepmaxent_encoding_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)  
+        print("\nUse S")
+    else:
+        print(f"\nCRITICAL ERROR: Model type '{model_type}' is not available.")
+        sys.exit(1)  # Exits the script immediately with an error status
+        
     model = model.to(device)
     
     criterion = deepmaxent_loss().to(device)

@@ -60,6 +60,66 @@ class deepmaxent_embedding_model(nn.Module):
         # Remove the final dimension to match your original output format: [batch_size, num_species]
         return out.squeeze(-1)
 
+class deepmaxent_encoding_embedding_model(nn.Module):
+    def __init__(self, input_size, hidden_size, num_species, hidden_nbr, embedding_dim=3, hidden_env = 5, env_nbr = 5, encoded_env = 3):
+        super(deepmaxent_encoding_embedding_model, self).__init__()
+        self.num_species = num_species
+        # Define the Embedding Matrix for all species
+        self.species_embedding = nn.Embedding(num_embeddings=num_species, embedding_dim=embedding_dim)
+        # Environmental input layer
+        self.env_input_layer = nn.Linear(input_size, hidden_env)
+        # Environmental Pre-Encoding Layer
+        self.env_encoding_layers = nn.ModuleList([
+            nn.Linear(hidden_env, hidden_env) for _ in range(env_nbr)
+        ])
+        # Environmental final encoding layer
+        self.env_final = nn.Linear(hidden_env, encoded_env)
+        # The input layer now accepts the final environmental encoded layer PLUS the 3 embedding values for each species
+        self.fc1_lambda = nn.Linear(encoded_env + embedding_dim, hidden_size)
+        # Hidden layers remain exactly the same
+        self.hidden_layers_lambda = nn.ModuleList([
+            nn.Linear(hidden_size, hidden_size) for _ in range(hidden_nbr)
+        ])
+        # The output layer now outputs 1 value (the score for a single site-species pair)
+        self.fc3_lambda = nn.Linear(hidden_size, 1)
+        
+    def forward(self, xinput):
+        # xinput shape is typically: [batch_size, input_size]
+        batch_size = xinput.size(0) 
+        # --- 1. ENVIRONMENTAL ENCODING ---
+        # Map raw input to hidden environmental space
+        # Shape: [batch_size, hidden_env]
+        env_x = self.env_input_layer(xinput).relu()
+        # Pass through intermediate environmental encoding layers with residual connections
+        for layer in self.env_encoding_layers:
+            env_x = layer(env_x).relu() + env_x
+            
+        # Final projection to the encoded latent space
+        # Shape: [batch_size, encoded_env]
+        env_encoded = self.env_final(env_x).relu() 
+        # --- 2. DATA PREPARATION FOR MERGING ---
+        # Expand the encoded environment for every species
+        # Transforms shape from [batch_size, encoded_env] -> [batch_size, num_species, encoded_env]
+        env_expanded = env_encoded.unsqueeze(1).expand(batch_size, self.num_species, -1)
+        # Get the embeddings for ALL species
+        species_ids = torch.arange(self.num_species, device=xinput.device)
+        emb = self.species_embedding(species_ids) # Shape: [num_species, embedding_dim]        
+        # Duplicate the embeddings for every site in the batch
+        # Transforms shape from [num_species, embedding_dim] -> [batch_size, num_species, embedding_dim]
+        emb_expanded = emb.unsqueeze(0).expand(batch_size, self.num_species, -1)        
+        # Merge (concatenate) the latent environmental covariates and the species embeddings
+        # Shape becomes: [batch_size, num_species, encoded_env + embedding_dim]
+        merged_input = torch.cat([env_expanded, emb_expanded], dim=2)
+        # --- 3. JOINT NEURAL NETWORK PASS ---
+        # Map the concatenated features to the hidden size
+        x = self.fc1_lambda(merged_input).relu()        
+        # Pass through the joint hidden layers with residual connections
+        for layer in self.hidden_layers_lambda:
+            x = layer(x).relu() + x   
+        # Output layer for the final occurrence/abundance score
+        out = self.fc3_lambda(x) # Shape: [batch_size, num_species, 1]        
+        # Remove the final dimension to yield: [batch_size, num_species]
+        return out.squeeze(-1)
     
 def save_mlp_model(args, model):
     """

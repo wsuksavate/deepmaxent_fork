@@ -26,6 +26,23 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
+# DeepMaxent libraries
+from librairies.model import deepmaxent_model, deepmaxent_embedding_model
+from librairies.losses import deepmaxent_loss
+from librairies.utils import set_seed
+
+# Set random seed for reproducibility
+set_seed(42)
+
+# Plotting style
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams['figure.figsize'] = (12, 8)
+plt.rcParams['font.size'] = 11
+plt.rcParams['axes.titlesize'] = 14
+plt.rcParams['axes.labelsize'] = 12
+
+print("✅ All libraries loaded successfully!")
+
 #%% Data Import and Cleaning
 # Load the biodiversity dataset
 df = pd.read_csv('data/custom/occu_data.csv', low_memory=False)
