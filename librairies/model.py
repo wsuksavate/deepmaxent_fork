@@ -20,7 +20,7 @@ class deepmaxent_model(nn.Module):
 ### My modification: Add species embedding
 ### num_species = output_size
 class deepmaxent_embedding_model(nn.Module):
-    def __init__(self, input_size, hidden_size, num_species, hidden_nbr, embedding_dim=3):
+    def __init__(self, input_size, hidden_size, num_species, hidden_nbr, embedding_dim):
         super(deepmaxent_embedding_model, self).__init__()
         self.num_species = num_species
         # Define the Embedding Matrix for all species
@@ -61,7 +61,7 @@ class deepmaxent_embedding_model(nn.Module):
         return out.squeeze(-1)
 
 class deepmaxent_encoding_embedding_model(nn.Module):
-    def __init__(self, input_size, hidden_size, num_species, hidden_nbr, embedding_dim=3, hidden_env = 5, env_nbr = 5, encoded_env = 3):
+    def __init__(self, input_size, hidden_size, num_species, hidden_nbr, embedding_dim, hidden_env, env_nbr, encoded_env):
         super(deepmaxent_encoding_embedding_model, self).__init__()
         self.num_species = num_species
         # Define the Embedding Matrix for all species

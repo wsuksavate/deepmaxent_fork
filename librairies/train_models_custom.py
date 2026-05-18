@@ -691,7 +691,8 @@ def make_results_directory(args):
     if not os.path.exists(f"{args.outputdir}/models"):
         os.mkdir(f"{args.outputdir}/models")
 
-def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size, device="cuda", model_type = "encoding_embedding"):
+def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size, device="cuda", model_type = "encoding_embedding",
+embedding_dim = 3, hidden_env = 5, env_nbr = 5, encoded_env = 3):
     """
     Train DeepMaxent model with validation monitoring.
     model_type = original, embedding, encoding_embedding
@@ -709,14 +710,20 @@ def train_deepmodel(X_train, y_train, X_val, y_val, args, hidden_size, device="c
     
     ### If using species embedding model
     if model_type == "embedding":
-        model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)
+        model = deepmaxent_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr, embedding_dim)
         print("\nUse Species Embedding Model")
+        print(f"\nEmbedding dimension = {embedding_dim}")
     elif model_type == "original":
         model = deepmaxent_model(input_size, hidden_size, output_size, args.hidden_nbr)  
         print("\nUse Original Model")
     elif model_type == "encoding_embedding":
-        model = deepmaxent_encoding_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr)  
-        print("\nUse S")
+        model = deepmaxent_encoding_embedding_model(input_size, hidden_size, output_size, args.hidden_nbr, embedding_dim,
+        hidden_env, env_nbr, encoded_env)  
+        print("\nUse Environmental-encoding Species-embedding Model")
+        print(f"Embedding dimension = {embedding_dim}")
+        print(f"Env. encoding size = {hidden_env}")
+        print(f"Env. encoding layers = {env_nbr}")
+        print(f"Env. latent dimension = {encoded_env}")
     else:
         print(f"\nCRITICAL ERROR: Model type '{model_type}' is not available.")
         sys.exit(1)  # Exits the script immediately with an error status
